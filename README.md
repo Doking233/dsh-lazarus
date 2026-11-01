@@ -45,7 +45,7 @@
 
 ---
 
-## 三个命令
+## 五个命令
 
 ```bash
 # 体检：体积账本、注入占比、预算、最后的压缩错误
@@ -54,8 +54,14 @@ node scripts/rescue.mjs scan   <会话id前缀|日志路径>
 # 导出对话：按 turn 输出 user/ai 正文
 node scripts/rescue.mjs talk   <sid|路径> [输出文件]
 
-# 导出用户消息索引：写「年表」之前先看这个
+# 导出用户消息索引（每行带时间戳）：写「年表」之前先看这个
 node scripts/rescue.mjs index  <sid|路径> [输出文件]
+
+# 所有会话离窗口还有多远，按占用率倒序——先看这个，再决定救谁
+node scripts/rescue.mjs health [--window 1048576]
+
+# 核年表：把它里面「」引的原话逐条回老日志查，看是不是真出自用户口中
+node scripts/rescue.mjs verify <年表.md> <sid前缀|日志路径>
 ```
 
 `sid` 可以只给前 8 位，例如 `b516a1f7`。也可以直接给 `.jsonl.zstd` 的绝对路径。

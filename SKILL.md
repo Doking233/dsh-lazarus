@@ -50,7 +50,16 @@ cd ~/.dsh/skill-manager/library/lazarus/scripts
 node rescue.mjs scan <会话id前缀 | 日志路径>       # 体检
 node rescue.mjs index <...> <out.txt>              # 用户消息索引（写年表前先看这个）
 node rescue.mjs talk  <...> <out.md>               # 按 turn 导出双方正文
+node rescue.mjs health [--window 1048576]          # 所有会话离窗口还有多远，先看这个再决定救谁
+node rescue.mjs verify <年表.md> <...>             # 核年表里的「原话」是不是真出自他口中
 ```
+
+`index` 每行带时间戳（`t12  10-28 04:17`），写年表时「隔了多久」不用再回日志翻。
+`health` 按占用率倒序列出所有会话，`>=0.8 危险 / >=0.6 偏高`，每行注明这个数取自
+`usage`（最近一次请求）还是 `estimate`（本地估算），两者不可互相印证。
+`verify` 从年表里抽所有 `「」` 引的原话，回老日志里逐条查，分严格命中与截断命中两档——
+引用常被写成「前半句…后半句」，所以严格命中率天然偏低（实测 0.867，宽松 0.947）。
+**这个数才是「年表可不可信」的证据**，不是自己读完觉得像。
 
 `scan` 会给出：字节/帧数/事件数/seq 区间/turn 数、各类事件字符占比、
 把用户消息拆成「真人说的」和「系统注入的」、最后一次压缩的错误原文、以及差多少 token。

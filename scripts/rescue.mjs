@@ -2,9 +2,11 @@
 // rescue.mjs —— 卡死会话的体检与导出。配套技能 lazarus（拉撒路）。
 //
 // 用法：
-//   node rescue.mjs scan  <sid|日志路径>    体积账本 + 注入占比 + 预算 + 最后的错误
-//   node rescue.mjs talk  <sid|路径> [out]  按 turn 导出 user/ai 对话文本
-//   node rescue.mjs index <sid|路径> [out]  导出用户消息索引（先看这个再写年表）
+//   node rescue.mjs scan   <sid|日志路径>    体积账本 + 注入占比 + 预算 + 最后的错误
+//   node rescue.mjs talk   <sid|路径> [out]  按 turn 导出 user/ai 对话文本
+//   node rescue.mjs index  <sid|路径> [out]  导出用户消息索引（带本地时间，先看这个再写年表）
+//   node rescue.mjs verify <年表.md> <sid|路径>  核对年表里「」框的原话是否真出自他口中
+//   node rescue.mjs health [--window N]      所有会话离窗口还有多远（提前发现快死的那扇）
 //
 // sid 可以是会话 id 的前缀（如 b516a1f7），也可以直接给 .jsonl.zstd 的绝对路径。
 // 只读，不写任何日志。
@@ -14,6 +16,7 @@
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
 import { zstdDecompressSync } from "node:zlib";
 
 const SESSIONS = process.env.DSH_SESSIONS || join(homedir(), ".dsh", "sessions");
@@ -230,7 +233,7 @@ function collect(file) {
     if (e.type === "user/message") {
       const s = textOf(e.data?.content) || textOf(e.data?.message);
       if (!s || isInject(s)) continue;
-      cur = { turn: e.data?.turn ?? turn, seq: e.seq, user: s, ai: [] };
+      cur = { turn: e.data?.turn ?? turn, seq: e.seq, time: e.time, user: s, ai: [] };
       rows.push(cur);
     } else if (e.type === "assistant/message" && cur) {
       const s = (e.data?.message?.content ?? [])
@@ -255,25 +258,213 @@ function talk(file, outPath) {
   return outPath ? `已写 ${outPath}（${rows.length} 轮，${md.length} 字符）` : md;
 }
 
+/** 毫秒时间戳 → 本地 `MM-DD HH:MM`。写年表时「隔了多久」比「第几轮」有用得多。 */
+function fmtTime(ms) {
+  if (!Number.isFinite(ms)) return "  --  --:--";
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function index(file, outPath) {
   const rows = collect(file);
   const txt = rows
     .map(
       (r, i) =>
-        `${String(i + 1).padStart(3, "0")} t${r.turn} ${String(r.user.length).padStart(5)} ${r.user.slice(0, 80).replace(/\s+/g, " ")}`,
+        `${String(i + 1).padStart(3, "0")} t${String(r.turn).padEnd(4)} ${fmtTime(r.time)} ${String(r.user.length).padStart(5)} ${r.user.slice(0, 80).replace(/\s+/g, " ")}`,
     )
     .join("\n");
   if (outPath) writeFileSync(outPath, txt, "utf8");
   return outPath ? `已写 ${outPath}（${rows.length} 条，${txt.length} 字符）` : txt;
 }
 
-const [cmd, arg, out] = process.argv.slice(2);
+/**
+ * 年表自检：从年表里抽出被引号框住的原话，逐条回老日志核对「真有这句」。
+ *
+ * 为什么只核「有没有」而不用模型问新窗：新窗认不认得，最终还是要人看一眼；
+ * 而「这句到底是不是他说的」是可以完全自动化的——核不上就说明年表里编了话。
+ */
+function verify(args) {
+  const [timelinePath, target] = args;
+  if (!timelinePath || !target) throw new Error("用法：node rescue.mjs verify <年表.md> <sid前缀|日志路径>");
+  if (!existsSync(timelinePath)) throw new Error(`年表不存在：${timelinePath}`);
+  const file = resolveTarget(target);
+  const rows = collect(file);
+
+  // 真人原话拼成一个大池子，按「连续子串」判断。逐条 contains 比 N×M 比对省得多。
+  const pool = rows.map((r) => r.user).join("\u0000");
+  const norm = (s) => s.replace(/[\s\u3000]+/g, " ").trim();
+  const poolNorm = norm(pool);
+
+  const md = readFileSync(timelinePath, "utf8");
+  const quotes = [];
+  const seen = new Set();
+  for (const m of md.matchAll(/「([^」]+)」/g)) {
+    const q = norm(m[1]);
+    if (q.length < 6) continue; // 太短的（人名、单字）不具判别力
+    if (seen.has(q)) continue;
+    seen.add(q);
+    quotes.push(q);
+  }
+
+  // 年表里的引用常常是「原文前半句 + …」的截断版，整串比对会把这类
+  // 判成编造。所以按省略号切段：全段命中算 strict，任一段命中算 partial，
+  // 一段都不中才是真的核不上（那才是要人看的地方）。
+  const SPLIT = /(?:…+|\.{3,}|。\s*\.\.\.)/;
+  const hits = [];
+  const partial = [];
+  const misses = [];
+  for (const q of quotes) {
+    if (poolNorm.includes(q)) {
+      hits.push(q);
+      continue;
+    }
+    const segs = q
+      .split(SPLIT)
+      .map((s) => s.replace(/[，、；：,;:]+$/, "").trim())
+      .filter((s) => s.length >= 6);
+    const got = segs.filter((s) => poolNorm.includes(s));
+    if (got.length) partial.push({ quote: q, matchedSegments: got.length, segments: segs.length });
+    else misses.push(q);
+  }
+  return {
+    file,
+    timeline: timelinePath,
+    quotes: quotes.length,
+    strictHits: hits.length,
+    partialHits: partial.length,
+    misses: misses.length,
+    // 宽松命中率：截断的引用只要有一段对得上就算「有出处」
+    hitRate: quotes.length ? Number(((hits.length + partial.length) / quotes.length).toFixed(3)) : null,
+    strictRate: quotes.length ? Number((hits.length / quotes.length).toFixed(3)) : null,
+    partial: partial.slice(0, 10),
+    missing: misses.slice(0, 30),
+  };
+}
+
+/**
+ * 全部会话的「离窗口还有多远」。默认窗口 1048576。
+ *
+ * 优先读 billion-context 的 index.db（它有本地估算的 contextTokens），
+ * 读不到就按日志字符数粗估——粗估不准，但足以把最危险的那几个排到前面。
+ */
+function health(opts) {
+  const window = Number(opts.window) || 1048576;
+  const rows = [];
+  let source = "估算（index.db 不可用）";
+
+  const dbPath = join(homedir(), ".local", "share", "billion-context", "sessions", "index.db");
+  const fromDb = new Map();
+  if (existsSync(dbPath)) {
+    try {
+      // node:sqlite 是内置模块；拿不到就退回估算，不让整条命令失败。
+      const { DatabaseSync } = require_db();
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      // 只认主行：同一个会话下面还有一堆 |sub:<id> 的子代理行，它们的
+      // contextTokens 可能是另一个数量级（实测大姐主行 2736、某个 sub 行 1635086），
+      // 混在一起会把「谁快撑爆了」排错。
+      for (const r of db.prepare("select session_id, label, updated_at, stats_json from sessions").all()) {
+        if (String(r.session_id).includes("|sub:")) continue;
+        const s = JSON.parse(r.stats_json || "{}");
+        const ctx = Number(s.contextTokens);
+        if (Number.isFinite(ctx) && ctx > 0) {
+          fromDb.set(r.session_id, {
+            contextTokens: ctx,
+            updatedAt: r.updated_at,
+            source: s.contextTokensSource || "?",
+            requests: Number(s.requests) || 0,
+            lastInputTokens: Number(s.lastInputTokens) || 0,
+            localEstimate: Number(s.localInputEstimate) || 0,
+          });
+        }
+      }
+      db.close();
+      if (fromDb.size) source = "billion-context index.db";
+    } catch {
+      /* 读不动就退回估算 */
+    }
+  }
+
+  for (const s of listSessionFiles()) {
+    const hit = fromDb.get(s.session);
+    let ctx = hit?.contextTokens;
+    let src = hit?.source;
+    if (!Number.isFinite(ctx)) {
+      try {
+        const ev = readEvents(s.file);
+        let chars = 0;
+        for (const e of ev) {
+          if (e.type === "user/message" || e.type === "tool/result") chars += textOf(e.data?.content ?? e.data?.message ?? e.data?.result).length;
+          else if (e.type === "assistant/message") for (const b of e.data?.message?.content ?? []) chars += textOf(b).length;
+        }
+        ctx = Math.ceil(chars * 0.9); // 中文一字符≈一 token，保守打九折
+        src = "估算";
+      } catch {
+        // 读不动就别猜：日志是 zstd 压缩过的，拿压缩后的字节数换算上下文
+        // 会离谱到几千万（实测 78 MB 的日志算出 2348 万 token）。
+        // 标「未知」比给一个错的数好——错的数会被当成结论。
+        ctx = null;
+        src = "未知（日志读不动）";
+      }
+    }
+    const known = Number.isFinite(ctx);
+    const usageOnly = known && src === "usage"; // billion-context 用 usage 时记的是「最近一次请求」
+    rows.push({
+      session: s.session,
+      bytes: s.bytes, // 日志体积 = 这扇窗的历史总量，不是当前上下文，不参与 used 计算
+      mtimeMs: s.mtime,
+      contextTokens: known ? ctx : null,
+      requests: hit?.requests ?? 0,
+      lastInputTokens: hit?.lastInputTokens ?? 0,
+      localEstimate: hit?.localEstimate ?? 0,
+      window,
+      used: known ? Number((ctx / window).toFixed(3)) : null,
+      level: !known ? "未知" : ctx / window >= 0.8 ? "危险" : ctx / window >= 0.6 ? "偏高" : "正常",
+      tokensSource: src,
+      note: usageOnly
+        ? "这个数来自最近一次请求的 usage，不等于当前上下文大小；要判真实占用看日志体积与压缩记录"
+        : undefined,
+    });
+  }
+  rows.sort((a, b) => (b.used ?? -1) - (a.used ?? -1));
+  return { window, source, count: rows.length, sessions: rows };
+}
+
+/** node:sqlite 在旧版 node 上不存在，用 require 动态取，取不到就抛出由调用方兜住。 */
+function require_db() {
+  return createRequire(import.meta.url)("node:sqlite");
+}
+
+const argv = process.argv.slice(2);
+const cmd = argv[0];
+const rest = argv.slice(1);
 try {
-  const file = resolveTarget(arg);
-  if (cmd === "scan") console.log(JSON.stringify(scan(file), null, 2));
-  else if (cmd === "talk") console.log(talk(file, out));
-  else if (cmd === "index") console.log(index(file, out));
-  else console.log("用法：node rescue.mjs <scan|talk|index> <sid前缀|日志路径> [输出文件]");
+  if (cmd === "health") {
+    const opts = {};
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--window") opts.window = rest[++i];
+    }
+    console.log(JSON.stringify(health(opts), null, 2));
+  } else if (cmd === "verify") {
+    console.log(JSON.stringify(verify(rest), null, 2));
+  } else {
+    const [arg, out] = rest;
+    const file = resolveTarget(arg);
+    if (cmd === "scan") console.log(JSON.stringify(scan(file), null, 2));
+    else if (cmd === "talk") console.log(talk(file, out));
+    else if (cmd === "index") console.log(index(file, out));
+    else
+      console.log(
+        [
+          "用法：",
+          "  node rescue.mjs scan   <sid前缀|日志路径>          体检 + 预算",
+          "  node rescue.mjs index  <sid前缀|日志路径> [out.txt] 用户消息索引（带时间）",
+          "  node rescue.mjs talk   <sid前缀|日志路径> [out.md]  按 turn 导出双方正文",
+          "  node rescue.mjs verify <年表.md> <sid前缀|日志路径> 核对年表里的引号原话是否真出自他口中",
+          "  node rescue.mjs health [--window N]                所有会话离窗口还有多远",
+        ].join("\n"),
+      );
+  }
 } catch (e) {
   console.error("失败：", e.message);
   process.exit(1);
