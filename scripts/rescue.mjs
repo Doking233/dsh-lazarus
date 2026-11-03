@@ -498,7 +498,8 @@ try {
     console.log(JSON.stringify(verify(rest), null, 2));
   } else {
     const [arg, out] = rest;
-    const file = resolveTarget(arg);
+    // 只认 scan/talk/index 才去解析目标：命令行空着时要打印用法，而不是报"缺参数"
+    const file = ["scan", "talk", "index"].includes(cmd) ? resolveTarget(arg) : null;
     if (cmd === "scan") console.log(JSON.stringify(scan(file), null, 2));
     else if (cmd === "talk") console.log(talk(file, out));
     else if (cmd === "index") console.log(index(file, out));
