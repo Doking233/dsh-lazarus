@@ -37,20 +37,21 @@ function decompressFrames(buf) {
     i = n;
   }
   const lines = [];
-  let failed = 0;
-  for (const f of frames) {
+  const failedFrames = [];
+  frames.forEach((f, idx) => {
     try {
       lines.push(...zstdDecompressSync(f).toString("utf8").split("\n"));
     } catch {
-      failed++;
+      // 记帧号：只报"坏了几帧"定位不了。帧是按魔数顺序切的，序号能回指到那一段事件
+      failedFrames.push(idx);
     }
-  }
-  return { lines, frames: frames.length, failed };
+  });
+  return { lines, frames: frames.length, failed: failedFrames.length, failedFrames };
 }
 
 /** 读一个会话日志，返回事件数组（原样，不做 schema 改写）。 */
 function readSession(file) {
-  const { lines, frames, failed } = decompressFrames(readFileSync(file));
+  const { lines, frames, failed, failedFrames } = decompressFrames(readFileSync(file));
   const events = [];
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -61,7 +62,7 @@ function readSession(file) {
     }
   }
   const head = events.find((e) => e.type === "session");
-  return { file, events, frames, failed, declaredVersion: head?.version ?? null, meta: head ?? null };
+  return { file, events, frames, failed, failedFrames, declaredVersion: head?.version ?? null, meta: head ?? null };
 }
 
 function readEvents(file) {
@@ -115,8 +116,27 @@ const INJECT = [
   "[meow-memory-dream]",
   "<system-reminder>",
   "The approval policy changed",
+  "[dsh-cross-session-approval]",
   "=====",
 ];
+
+// 自动生成的检查点摘要。2026-11-03 实测老窗里有 19 条、最长 82756 字，
+// 因为不在这张表里，被当成"他说的"记进了用户消息索引。
+const INJECT_RE = [
+  /^This is an automatically generated checkpoint condensing/i,
+  /^This is an automatically generated summary of/i,
+];
+
+/** 一条 user/message 是注入还是他真说的。
+ *  短串（"=====" 只有 5 个字符）只认开头：子串匹配会让任何含 5 个等号的内容被当成注入。 */
+function isInject(t) {
+  if (!t) return false;
+  for (const p of INJECT) {
+    if (t.startsWith(p)) return true;
+    if (p.length >= 12 && t.includes(p.slice(0, 12))) return true;
+  }
+  return INJECT_RE.some((re) => re.test(t));
+}
 
 function resolveTarget(arg) {
   if (!arg) throw new Error("缺参数：sid 前缀或日志路径");
@@ -144,10 +164,16 @@ function textOf(v) {
   return "";
 }
 
-const isInject = (t) => INJECT.some((p) => t.startsWith(p) || t.includes(p.slice(0, 12)));
 
 function scan(file) {
-  const { events, frames, declaredVersion } = readSession(file);
+  const { events, frames, failed, failedFrames, declaredVersion } = readSession(file);
+  if (failed > 0) {
+    const shown = failedFrames.slice(0, 10).join(", ");
+    console.error(
+      "[警告] " + file + " 有 " + failed + "/" + frames + " 帧解压失败（帧号 " + shown +
+        (failedFrames.length > 10 ? " …" : "") + "）。这些帧里的事件没被读进来，下面的账是少的。",
+    );
+  }
   const seqs = events.map((e) => e.seq).filter(Number.isFinite);
   const turns = new Set();
   const chars = {};
@@ -202,6 +228,7 @@ function scan(file) {
     byTypeChars: chars,
     assistantBlocks: { reasoning: reasoningChars, text: textChars, toolCall: toolCallChars },
     totalChars,
+    framesFailed: { count: failed, indexes: failedFrames.slice(0, 20), total: frames },
     userMessages: {
       all: userMsgs.length,
       real: real.length,
@@ -210,6 +237,11 @@ function scan(file) {
       injectedChars: injected.reduce((a, b) => a + b.length, 0),
       dreamTaskCount: dream.length,
       dreamTaskChars: dream.reduce((a, b) => a + b.length, 0),
+      // 最长 5 条"真人"消息的开头：注入污染几乎总藏在最长的那些里，人眼扫这个最快
+      realPreview: [...real]
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 5)
+        .map((s) => ({ len: s.length, head: s.slice(0, 80) })),
     },
     lastCompactionErrors: errors,
     completionReserved: maxTokens,
@@ -254,7 +286,7 @@ function talk(file, outPath) {
         `### turn ${r.turn} (seq ${r.seq})\n**他**：${r.user}\n\n**我**：${r.ai.join("\n") || "（无正文）"}\n`,
     )
     .join("\n");
-  if (outPath) writeFileSync(outPath, md, "utf8");
+  if (outPath) writeFileSync(outPath, md.endsWith("\n") ? md : md + "\n", "utf8");
   return outPath ? `已写 ${outPath}（${rows.length} 轮，${md.length} 字符）` : md;
 }
 
@@ -274,7 +306,7 @@ function index(file, outPath) {
         `${String(i + 1).padStart(3, "0")} t${String(r.turn).padEnd(4)} ${fmtTime(r.time)} ${String(r.user.length).padStart(5)} ${r.user.slice(0, 80).replace(/\s+/g, " ")}`,
     )
     .join("\n");
-  if (outPath) writeFileSync(outPath, txt, "utf8");
+  if (outPath) writeFileSync(outPath, txt.endsWith("\n") ? txt : txt + "\n", "utf8");
   return outPath ? `已写 ${outPath}（${rows.length} 条，${txt.length} 字符）` : txt;
 }
 
@@ -293,7 +325,17 @@ function verify(args) {
 
   // 真人原话拼成一个大池子，按「连续子串」判断。逐条 contains 比 N×M 比对省得多。
   const pool = rows.map((r) => r.user).join("\u0000");
-  const norm = (s) => s.replace(/[\s\u3000]+/g, " ").trim();
+  // 比对前两边都归一化：剥掉 markdown 标记、把弯引号拉直、压空白。
+  // 不这么做的话，「**原文**」这种把加粗写进引号内的引用会被判成编造——
+  // 那是格式差异，不是虚构。归一化只抹格式，不动字。
+  const norm = (s) =>
+    String(s)
+      .replace(/\*\*|__|`/g, "")
+      .replace(/[\u201c\u201d\u201e\u201f]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'")
+      // 空白整个删掉而不是压成一个空格：他的原话常带换行，年表里写成一句，
+      // 压成空格反而对不上（2026-11-03 实测 6 条引文全卡在这一处）。
+      .replace(/[\s\u3000]+/g, "");
   const poolNorm = norm(pool);
 
   const md = readFileSync(timelinePath, "utf8");
@@ -389,6 +431,7 @@ function health(opts) {
     const hit = fromDb.get(s.session);
     let ctx = hit?.contextTokens;
     let src = hit?.source;
+    let estimateChars = 0;
     if (!Number.isFinite(ctx)) {
       try {
         const ev = readEvents(s.file);
@@ -397,8 +440,11 @@ function health(opts) {
           if (e.type === "user/message" || e.type === "tool/result") chars += textOf(e.data?.content ?? e.data?.message ?? e.data?.result).length;
           else if (e.type === "assistant/message") for (const b of e.data?.message?.content ?? []) chars += textOf(b).length;
         }
-        ctx = Math.ceil(chars * 0.9); // 中文一字符≈一 token，保守打九折
-        src = "估算";
+        // 注意：这里累加的是**全部历史**，不是当前上下文。实测 71 MB 的日志 totalChars 4000 万，
+        // 估出 3600 万 token，对 104 万窗口高估三十多倍。只是读不到 index.db 时的兜底。
+        ctx = Math.ceil(chars * 0.9);
+        src = "估算（全历史累加，仅兜底）";
+        estimateChars = chars;
       } catch {
         // 读不动就别猜：日志是 zstd 压缩过的，拿压缩后的字节数换算上下文
         // 会离谱到几千万（实测 78 MB 的日志算出 2348 万 token）。
@@ -421,9 +467,12 @@ function health(opts) {
       used: known ? Number((ctx / window).toFixed(3)) : null,
       level: !known ? "未知" : ctx / window >= 0.8 ? "危险" : ctx / window >= 0.6 ? "偏高" : "正常",
       tokensSource: src,
+      estimateChars: estimateChars || undefined,
       note: usageOnly
         ? "这个数来自最近一次请求的 usage，不等于当前上下文大小；要判真实占用看日志体积与压缩记录"
-        : undefined,
+        : estimateChars
+          ? "这个数把全部历史字符累加后估算（" + estimateChars + " 字符），不是当前上下文；对窗口比只能用来排序，别当预算依据"
+          : undefined,
     });
   }
   rows.sort((a, b) => (b.used ?? -1) - (a.used ?? -1));
