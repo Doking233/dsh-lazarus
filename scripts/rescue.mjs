@@ -454,6 +454,16 @@ function health(opts) {
       }
     }
     const known = Number.isFinite(ctx);
+    // level 回答的是「离爆还有多远」，所以要用真正会进窗口的量：contextTokens 和
+    // localEstimate 谁大取谁。两个数谁大不固定（实测有 287K/536K 的，也有 331K/305K 的），
+    // 只看一个会漏。used 保留原来的 contextTokens 口径，不动——两个数并列才看得出差异。
+    const est = hit?.localEstimate ?? 0;
+    const ctxVal = known ? ctx : 0;
+    const pressureTokens = Math.max(ctxVal, est) || null;
+    const pressure = pressureTokens === null ? null : Number((pressureTokens / window).toFixed(3));
+    const levelSrc = pressureTokens === null ? null : est > ctxVal ? "est" : "ctx";
+    const levelText = pressure === null ? "未知" : pressure >= 0.8 ? "危险" : pressure >= 0.6 ? "偏高" : "正常";
+    const level = levelSrc === null ? levelText : levelText + " (" + levelSrc + " " + pressure + ")";
     const usageOnly = known && src === "usage"; // billion-context 用 usage 时记的是「最近一次请求」
     rows.push({
       session: s.session,
@@ -464,8 +474,9 @@ function health(opts) {
       lastInputTokens: hit?.lastInputTokens ?? 0,
       localEstimate: hit?.localEstimate ?? 0,
       window,
+      pressure,
       used: known ? Number((ctx / window).toFixed(3)) : null,
-      level: !known ? "未知" : ctx / window >= 0.8 ? "危险" : ctx / window >= 0.6 ? "偏高" : "正常",
+      level,
       tokensSource: src,
       estimateChars: estimateChars || undefined,
       note: usageOnly
@@ -475,7 +486,8 @@ function health(opts) {
           : undefined,
     });
   }
-  rows.sort((a, b) => (b.used ?? -1) - (a.used ?? -1));
+  // 排序按 pressure（真实压力），不是 used（消息面）。health 的用途是先把最危险的捞出来。
+  rows.sort((a, b) => (b.pressure ?? -1) - (a.pressure ?? -1));
   return { window, source, count: rows.length, sessions: rows };
 }
 
