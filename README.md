@@ -81,9 +81,9 @@ node scripts/rescue.mjs verify <年表.md> <sid前缀|日志路径>
 
 ---
 
-## 2026-11-03 修的三个账目错误
+## 三个让账不准的坑
 
-旧版给的数字有三个是错的，都影响「这扇窗到底说了多少话」的判断。读到别的项目抄过去的旧输出，先看一眼是哪一版：
+旧版给的数字有三个是错的，都影响「这扇窗到底说了多少话」的判断。下面记的是**错在哪、怎么验的**，哪天改的见 [CHANGELOG.md](CHANGELOG.md)：
 
 | 症状 | 错在哪 | 现在 |
 |---|---|---|
@@ -109,7 +109,7 @@ node scripts/rescue.mjs verify <年表.md> <sid前缀|日志路径>
 
 ---
 
-## 2026-11-04：health 的判据换成 pressure
+## 为什么 health 看 pressure，不看进度条
 
 旧版 `health` 按 `contextTokens` 排序和判级，那个数是**最近一次请求上游回传的 usage**。
 它有个要命的盲区：2026-11-04 有一扇窗 `contextTokens` 只有 271K（26%，界面显示「正常」），
@@ -200,6 +200,12 @@ context ~1085726 tokens (down from ~1546099 before preflight) exceeds the model 
 - [ ] 老窗口已改名（否则侧边栏里两个同名窗口，以后分不清）
 - [ ] 新会话 id 已记入记忆库
 - [ ] 用户体验过一轮：能发消息、能收到回复
+
+---
+
+## 变更记录
+
+哪天动了什么，见 [CHANGELOG.md](CHANGELOG.md)。README 只讲怎么用、为什么这么设计。
 
 ---
 
