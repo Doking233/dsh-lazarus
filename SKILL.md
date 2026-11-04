@@ -50,7 +50,7 @@ cd ~/.dsh/skill-manager/library/lazarus/scripts
 node rescue.mjs scan <会话id前缀 | 日志路径>       # 体检
 node rescue.mjs index <...> <out.txt>              # 用户消息索引（写年表前先看这个）
 node rescue.mjs talk  <...> <out.md>               # 按 turn 导出双方正文
-node rescue.mjs health [--window 1048576]          # 所有会话离窗口还有多远，先看这个再决定救谁
+node rescue.mjs health [--window 1048576]          # 所有会话按真实压力（pressure）倒序，先看这个再决定救谁
 node rescue.mjs verify <年表.md> <...>             # 核年表里的「原话」是不是真出自他口中
 ```
 

@@ -57,7 +57,7 @@ node scripts/rescue.mjs talk   <sid|路径> [输出文件]
 # 导出用户消息索引（每行带时间戳）：写「年表」之前先看这个
 node scripts/rescue.mjs index  <sid|路径> [输出文件]
 
-# 所有会话离窗口还有多远，按占用率倒序——先看这个，再决定救谁
+# 所有会话按真实压力（pressure）倒序——先看这个，再决定救谁
 node scripts/rescue.mjs health [--window 1048576]
 
 # 核年表：把它里面「」引的原话逐条回老日志查，看是不是真出自用户口中
@@ -109,6 +109,33 @@ node scripts/rescue.mjs verify <年表.md> <sid前缀|日志路径>
 
 ---
 
+## 2026-11-04：health 的判据换成 pressure
+
+旧版 `health` 按 `contextTokens` 排序和判级，那个数是**最近一次请求上游回传的 usage**。
+它有个要命的盲区：2026-11-04 有一扇窗 `contextTokens` 只有 271K（26%，界面显示「正常」），
+可它压缩时要重读的原文已经 229 万，`/compact` 连发三次全 400 —— 那扇窗已经死了，health 还在报绿灯。
+
+现在每行给两个口径：
+
+| 字段 | 含义 |
+|---|---|
+| `contextTokens` / `used` | 最近一次请求实际发出去多少（进度条读这个） |
+| `localEstimate` / `calibratedEstimate` | 本地按历史估的，后者乘过校准因子 |
+| `pressure` | `max(contextTokens, localEstimate × k)`，排序和判级都用它 |
+
+`k` 是 `index.db` 里 `calibratedEstimate` 那个比例，**k = 实际 ÷ 估算**（billion-context 的
+`applyEstimateCalibration` 末行是 `raw * k`）。k > 1 表示估算偏低：2026-11-04 实测五扇窗
+k 在 1.0441~1.1516，真实压力比估算高 4%~15%。
+
+两条边界：
+
+- **k 会漂**。`calibrationRing` 只留最近三个样本，同一天同一扇窗能从 0.9995 变成 1.0994。别把某一次的数当定值抄进文档。
+- **`est × k` 是近似**。k 乘的 raw 是当轮现算的 `textEstimate + overheadEstimate`，而 `localEstimate` 是 stats 里存的上一次估算，两者不同源。方向对，别当精确值。
+
+`level` 后面会标判级依据（`危险 (est*k 0.812)`），这样「used 只有 27% 却判危险」看起来不像 bug。
+
+---
+
 ## 判据：差多少 token
 
 上游 400 的判据是：
@@ -156,7 +183,7 @@ context ~1085726 tokens (down from ~1546099 before preflight) exceeds the model 
 1. `scan` 确认体积构成和差额
 2. `index` 导出用户消息索引，通读一遍，找出真正的转折点
 3. 写一份「年表」：按阶段组织，**逐字引用用户的原话**，不要概括成「用户讨论了 X」
-4. `cross_session_spawn` 建新会话，第一件事让它读年表再开口
+4. `cross_session_spawn` 建新会话，**`permission` 必须显式传 `danger-full-access`**——不传会被夹到沙箱层，Windows 上子会话直接 `0xC0000142` 起不来。第一件事让它读年表再开口
 5. 收尾：
    - 老窗口改名成「（旧·已卡死）」，日志和备份原样保留，可查
    - 删掉所有试坏的副本目录，别留在 `~/.dsh/sessions/` 里
