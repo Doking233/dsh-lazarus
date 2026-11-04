@@ -417,6 +417,9 @@ function health(opts) {
             requests: Number(s.requests) || 0,
             lastInputTokens: Number(s.lastInputTokens) || 0,
             localEstimate: Number(s.localInputEstimate) || 0,
+            calibK: Number(s.calibratedEstimate) || 0,
+            calibOrigin: s.calibratedEstimateOrigin || "",
+            ctxOrigin: s.lastInputTokensOrigin || "",
           });
         }
       }
@@ -454,14 +457,19 @@ function health(opts) {
       }
     }
     const known = Number.isFinite(ctx);
-    // level 回答的是「离爆还有多远」，所以要用真正会进窗口的量：contextTokens 和
-    // localEstimate 谁大取谁。两个数谁大不固定（实测有 287K/536K 的，也有 331K/305K 的），
-    // 只看一个会漏。used 保留原来的 contextTokens 口径，不动——两个数并列才看得出差异。
+    // level 回答的是「离爆还有多远」，所以要用真正会进窗口的量。
+    // localEstimate 是**未校准**的原始估算，billion-context 自己用 k=calibratedEstimate 去乘
+    // （applyEstimateCalibration 最后一行 raw*k，k 是「实际 ÷ 估算」）。不乘 k 会低估：
+    // 2026-11-04 实测三个会话 k 分别是 1.0945 / 1.1516 / 0.9995。origin 不一致时不校准，
+    // 跟它的行为对齐（跨路由/跨 provider 的 k 不算数）。
     const est = hit?.localEstimate ?? 0;
+    const k = hit?.calibK ?? 0;
+    const originOk = !hit?.calibOrigin || !hit?.ctxOrigin || hit.calibOrigin === hit.ctxOrigin;
+    const estCal = k > 0 && originOk ? Math.round(est * k) : est;
     const ctxVal = known ? ctx : 0;
-    const pressureTokens = Math.max(ctxVal, est) || null;
+    const pressureTokens = Math.max(ctxVal, estCal) || null;
     const pressure = pressureTokens === null ? null : Number((pressureTokens / window).toFixed(3));
-    const levelSrc = pressureTokens === null ? null : est > ctxVal ? "est" : "ctx";
+    const levelSrc = pressureTokens === null ? null : estCal > ctxVal ? (k > 0 && originOk ? "est*k" : "est") : "ctx";
     const levelText = pressure === null ? "未知" : pressure >= 0.8 ? "危险" : pressure >= 0.6 ? "偏高" : "正常";
     const level = levelSrc === null ? levelText : levelText + " (" + levelSrc + " " + pressure + ")";
     const usageOnly = known && src === "usage"; // billion-context 用 usage 时记的是「最近一次请求」
@@ -473,6 +481,8 @@ function health(opts) {
       requests: hit?.requests ?? 0,
       lastInputTokens: hit?.lastInputTokens ?? 0,
       localEstimate: hit?.localEstimate ?? 0,
+      calibK: k > 0 && originOk ? Number(k.toFixed(4)) : null,
+      calibratedEstimate: estCal || undefined,
       window,
       pressure,
       used: known ? Number((ctx / window).toFixed(3)) : null,

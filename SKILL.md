@@ -56,9 +56,13 @@ node rescue.mjs verify <年表.md> <...>             # 核年表里的「原话�
 
 `index` 每行带时间戳（`t12  10-28 04:17`），写年表时「隔了多久」不用再回日志翻。
 `health` 按 **pressure** 倒序列出所有会话，`>=0.8 危险 / >=0.6 偏高`。pressure 取
-`max(contextTokens, localEstimate)`——两个数谁大不固定（实测有 287K/536K 的，也有 331K/305K 的），
-只看一个都会漏；`used` 保留 `contextTokens` 口径不动，两个数并列才看得出差异。
-`level` 后面标依据来源（`危险 (est 0.812)`），不标的话「用了 27% 却判危险」读起来像 bug。
+`max(contextTokens, localEstimate × k)`——`k` 是 index.db 里的 `calibratedEstimate`，含义是
+**「实际 ÷ 估算」**（billion-context 的 `applyEstimateCalibration` 末行是 `raw * k`），
+不乘就会低估：2026-11-04 实测三个会话 k 分别是 1.0945 / 1.1516 / 0.9995。
+`localEstimate` 是未校准的原始估算，`calibratedEstimate` 字段给出的是乘过 k 的结果，两个都印出来。
+k 的 origin 与会话不一致时按它的规矩不校准（跨路由/跨 provider 的 k 不算数）。
+`used` 保留 `contextTokens` 口径不动，两个数并列才看得出差异。
+`level` 后面标依据来源（`危险 (est*k 0.812)`），不标的话「用了 27% 却判危险」读起来像 bug。
 每行另注明数取自 `usage`（最近一次请求）还是 `estimate`（本地估算），两者不可互相印证。
 `verify` 从年表里抽所有 `「」` 引的原话，回老日志里逐条查，分严格命中与截断命中两档——
 引用常被写成「前半句…后半句」，所以严格命中率天然偏低（2026-11-03 复测 137 条：严格 0.971，宽松 1.0）。
