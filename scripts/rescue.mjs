@@ -460,7 +460,9 @@ function health(opts) {
     // level 回答的是「离爆还有多远」，所以要用真正会进窗口的量。
     // localEstimate 是**未校准**的原始估算，billion-context 自己用 k=calibratedEstimate 去乘
     // （applyEstimateCalibration 最后一行 raw*k，k 是「实际 ÷ 估算」）。不乘 k 会低估：
-    // 2026-11-04 实测三个会话 k 分别是 1.0945 / 1.1516 / 0.9995。origin 不一致时不校准，
+    // 2026-11-04 实测五个会话 k 在 1.0441~1.1516，全部 > 1。**k 是滑动的**：
+    // calibrationRing 只留最近三个样本，同一天同一扇窗会漂（0.9995 → 1.0994），
+    // 别把某一次的数当定值。origin 不一致时不校准，
     // 跟它的行为对齐（跨路由/跨 provider 的 k 不算数）。
     // 注意这是**近似**：k 乘的 raw 是当轮现算的 textEstimate+overheadEstimate，而
     // localEstimate 是 stats 里存的上一次估算，两者不同源。别拿这个数当精确的 calibratedPayload。
