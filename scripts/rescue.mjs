@@ -462,6 +462,8 @@ function health(opts) {
     // （applyEstimateCalibration 最后一行 raw*k，k 是「实际 ÷ 估算」）。不乘 k 会低估：
     // 2026-11-04 实测三个会话 k 分别是 1.0945 / 1.1516 / 0.9995。origin 不一致时不校准，
     // 跟它的行为对齐（跨路由/跨 provider 的 k 不算数）。
+    // 注意这是**近似**：k 乘的 raw 是当轮现算的 textEstimate+overheadEstimate，而
+    // localEstimate 是 stats 里存的上一次估算，两者不同源。别拿这个数当精确的 calibratedPayload。
     const est = hit?.localEstimate ?? 0;
     const k = hit?.calibK ?? 0;
     const originOk = !hit?.calibOrigin || !hit?.ctxOrigin || hit.calibOrigin === hit.ctxOrigin;
