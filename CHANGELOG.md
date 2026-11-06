@@ -6,6 +6,23 @@
 README 讲「怎么用、为什么这么设计」，这里只记「哪天动了什么」。
 两边分工：想知道某个数为什么长这样，去 README；想知道它是哪次改出来的，来这里。
 
+## 2026-11-06
+
+### 新增
+
+- 注入表可外部扩展：`scripts/inject-patterns.json` 或 `$LAZARUS_INJECT_PATTERNS`，加新格式不用改代码
+- SKILL 补「适用前提」一节：Node ≥22、日志默认路径、脚本位置怎么找、没装 billion-context 也能跑
+
+### 变更
+
+- `isInject` 从 12 字前缀子串改成完整串匹配——真人消息里出现 `The approval` 这类前缀不再被误判成注入
+- `health` 估算 note 补「不含 system prompt 与工具定义（稳定区），真实占用只会更高」
+
+### 文档
+
+- 接续的首条任务里，`memq/recent 门命令` 改成「你手边能翻原话的入口」，没有门的鱼写日志路径
+- README 前置条件补三条（缺 cross-session / billion-context / inject-patterns 时怎么办）；接续那步加「没有 `cross_session_spawn` 就手工新建会话」；`find` 找脚本位置；pressure 那节注明没装 billion-context 时的退化行为
+
 ## 2026-11-04
 
 ### 新增

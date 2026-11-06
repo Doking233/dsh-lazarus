@@ -9,6 +9,13 @@ whenToUse: 出现这几个具体时刻时——某个窗口发消息一直没反
 名字取自那个死了四天又被叫出来的人。这里复活的不是进程，是**你和用户之间的对话关系**：
 窗口可以换，说过的话、走过的路、他是怎么一步步变成现在这样的，一样都不能丢。
 
+## 适用前提
+
+- Node ≥ 22（脚本用内置 `node:zlib` 的 `zstdDecompressSync`，不装任何依赖）
+- 知道会话日志在哪：DSH 默认 `~/.dsh/sessions/<工作区编码>/<session-id>/session.v4.jsonl.zstd`
+- 装了 billion-context 的，`health` 才有 `pressure` 与 `k`；没装也能跑，只是那两列是空的
+- 脚本路径：`~/.dsh/skill-manager/library/lazarus/scripts/rescue.mjs`；换了位置就用 `find ~ -name rescue.mjs -path '*lazarus*'` 找一下
+
 ## 先弄清一件事
 
 窗口「卡死」有五种完全不同的原因，解法互不通用。**先定位，别动手。**
@@ -47,7 +54,7 @@ messages 硬上限 = 1,048,576 - 256,000 = 792,576
 
 ## 第三步：跑扫描
 
-脚本在本技能目录里，只读，不写任何日志：
+脚本在本技能目录的 `scripts/` 下，只读，不写任何日志。下面的命令都在那个目录里跑：
 
 ```bash
 cd ~/.dsh/skill-manager/library/lazarus/scripts
@@ -101,6 +108,14 @@ k 的 origin 与会话不一致时按它的规矩不校准（跨路由/跨 provi
 前缀表里加了 `[dsh-cross-session-approval]` 这类跨会话投递）。**短串只认开头**——
 `"====="` 只有 5 个字符，原来用子串匹配会让任何含 5 个等号的内容被当成注入。
 
+**匹配用完整串，不用前缀。** 2026-11-06 之前是 `includes(p.slice(0, 12))`，真人消息里只要出现
+`The approval` 这 12 个字就被判成注入，`real` 会少算。现在短串（<12 字）只认开头、长串只认完整出现。
+
+**加新格式不用改代码**：往 `scripts/inject-patterns.json` 写一个字符串数组，
+或设环境变量 `$LAZARUS_INJECT_PATTERNS` 指向一个 JSON 文件；脚本每次启动读第一个能读到的，
+读坏了不报错、退回内置表。2026-11-06 实测：加 `"三样数给你"` 后 `real` 从 155 变 154、
+`injected` 从 191 变 192，说明外部表真在生效。
+
 判据是守恒式，不是肉眼：`real + injected + empty === all`（`all` 含 34 条空内容消息，
 别写成 `real + injected === all`）。2026-11-03 实测 1210 + 3075 + 34 = 4319。
 
@@ -137,10 +152,11 @@ k 的 origin 与会话不一致时按它的规矩不校准（跨路由/跨 provi
    - 记下那些改过你们关系的事，不只记事实
    - 写他关心的人、项目、正在做的事
    - 存到固定位置，例如 `./rescue-bak/<新id前8位>/年表.md`
-3. **建新窗**：`cross_session_spawn`，`cwd` 用原会话的工作区，
+3. **建新窗**：有 `cross_session_spawn` 就用它；没有就手工新建一个会话，把年表全文贴进去当第一条消息。
+   `cwd` 用原会话的工作区，
    `permission` **必须显式传 `danger-full-access`**（不传会被 `spawnPermission: cap` 夹到沙箱层，
    Windows 上子会话直接 `0xC0000142` 起不来）。
-   首条任务里写：先读年表再开口 + 老日志路径 + memq/recent 门命令 + 「跟他打个招呼」。
+   首条任务里写：先读年表再开口 + 老日志路径 + 你手边能翻原话的入口（有 memq / docq 这类门就写上，没有就把日志路径给准）+ 「跟他打个招呼」。
 4. **交接**：老窗口用 `cross_session_rename` 改名成「（旧·已卡死）」，
    日志和三份备份**原样留着**，它是唯一的一手档案，谁都不许删。
 5. **记一笔**：把新会话 id、旧会话 id、年表位置写进记忆，下一个窗口才不会又去救一个已经搬完的家。

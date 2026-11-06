@@ -27,7 +27,9 @@
 
 - DSH（DeepSeek Harness）的会话日志在 `~/.dsh/sessions/`，可用环境变量 `DSH_SESSIONS` 覆盖
 - **Node >= 22.13**（需要内置的 `zstdDecompressSync`）
-- 可选：装了 `dsh-cross-session-approval` 才能用 `cross_session_spawn` / `cross_session_rename`（接续那一步要用）
+- 可选：装了 `dsh-cross-session-approval` 才能用 `cross_session_spawn` / `cross_session_rename`（接续那一步要用）；没有就手工新建会话，把年表贴进去
+- 可选：装了 `billion-context` 才有 `pressure` / `localEstimate` / `k` 这三列；没装也能跑，`health` 退化成只按 `contextTokens` 排
+- 可选：想给新格式加注入白名单，写在 `scripts/inject-patterns.json`（字符串数组）或环境变量 `$LAZARUS_INJECT_PATTERNS`
 
 不需要任何 npm 依赖，脚本是零依赖单文件。
 
@@ -42,6 +44,8 @@
 ```
 
 如果你不用技能库，也可以只把 `scripts/rescue.mjs` 拿走直接跑。
+
+找不到装在哪时：`find ~ -name rescue.mjs -path '*lazarus*' 2>/dev/null`。
 
 ---
 
@@ -107,9 +111,13 @@ node scripts/rescue.mjs verify <年表.md> <sid前缀|日志路径>
 
 坏帧那条是怎么验的：造一份副本，把第 120 帧中间 8 字节打乱，看它会不会真报出 `有 1/24635 帧解压失败`。只验「平时是 0」不算验过——那只能证明它不吵，不能证明它会叫。
 
+加新格式不用改代码：往 `scripts/inject-patterns.json` 写一个字符串数组，或设 `$LAZARUS_INJECT_PATTERNS` 指向一个 JSON 文件；脚本每次启动读第一个能读到的，读坏了不报错、退回内置表。
+
 ---
 
 ## 为什么 health 看 pressure，不看进度条
+
+没装 `billion-context` 时这一节只有前半段用得上：`health` 会退化成只按 `contextTokens` 排序，`pressure` / `k` 那几列是空的。
 
 旧版 `health` 按 `contextTokens` 排序和判级，那个数是**最近一次请求上游回传的 usage**。
 它有个要命的盲区：2026-11-04 有一扇窗 `contextTokens` 只有 271K（26%，界面显示「正常」），
@@ -183,7 +191,7 @@ context ~1085726 tokens (down from ~1546099 before preflight) exceeds the model 
 1. `scan` 确认体积构成和差额
 2. `index` 导出用户消息索引，通读一遍，找出真正的转折点
 3. 写一份「年表」：按阶段组织，**逐字引用用户的原话**，不要概括成「用户讨论了 X」
-4. `cross_session_spawn` 建新会话，**`permission` 必须显式传 `danger-full-access`**——不传会被夹到沙箱层，Windows 上子会话直接 `0xC0000142` 起不来。第一件事让它读年表再开口
+4. 建新会话：有 `cross_session_spawn` 就用它（**`permission` 必须显式传 `danger-full-access`**——不传会被夹到沙箱层，Windows 上子会话直接 `0xC0000142` 起不来）；没有就手工新建一个会话，把年表全文当第一条消息贴进去。第一件事让它读年表再开口
 5. 收尾：
    - 老窗口改名成「（旧·已卡死）」，日志和备份原样保留，可查
    - 删掉所有试坏的副本目录，别留在 `~/.dsh/sessions/` 里

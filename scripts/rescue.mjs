@@ -14,7 +14,8 @@
 // 零依赖：只用 node 标准库（node >= 22.13 才有 zstdDecompressSync）。
 // 会话日志默认在 ~/.dsh/sessions，可用环境变量 DSH_SESSIONS 覆盖。
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { createRequire } from "node:module";
 import { zstdDecompressSync } from "node:zlib";
@@ -108,7 +109,7 @@ function listSessionFiles(root = SESSIONS) {
   return out;
 }
 
-const INJECT = [
+const INJECT_DEFAULT = [
   "可能相关的记忆，仅供参考",
   "Current runtime context",
   "Time sampled while preparing turn",
@@ -119,6 +120,40 @@ const INJECT = [
   "[dsh-cross-session-approval]",
   "=====",
 ];
+
+/**
+ * 注入模式 = 内置表 + 外部 JSON（字符串数组）合并。
+ * 找法：$LAZARUS_INJECT_PATTERNS 指向的文件 → 脚本同目录 inject-patterns.json。
+ * 装了新的记忆/上下文插件带来新注入格式时，往 JSON 里加一条就行，不用改脚本。
+ * 加完跑 scan，看 userMessages.realPreview 里还有没有漏网的。
+ */
+function loadInjectPatterns() {
+  const out = [...INJECT_DEFAULT];
+  const candidates = [];
+  if (process.env.LAZARUS_INJECT_PATTERNS) candidates.push(process.env.LAZARUS_INJECT_PATTERNS);
+  try {
+    candidates.push(
+      createRequire(import.meta.url).resolve("./inject-patterns.json", {
+        paths: [dirname(fileURLToPath(import.meta.url))],
+      }),
+    );
+  } catch {
+    /* 同目录没有 inject-patterns.json 就算了 */
+  }
+  for (const p of candidates) {
+    try {
+      const arr = JSON.parse(readFileSync(p, "utf8"));
+      if (Array.isArray(arr)) {
+        for (const s of arr) if (typeof s === "string" && s && !out.includes(s)) out.push(s);
+      }
+      break; // 第一个能读的文件生效
+    } catch {
+      /* 坏文件不炸命令 */
+    }
+  }
+  return out;
+}
+const INJECT = loadInjectPatterns();
 
 // 自动生成的检查点摘要。2026-11-03 实测老窗里有 19 条、最长 82756 字，
 // 因为不在这张表里，被当成"他说的"记进了用户消息索引。
@@ -133,7 +168,10 @@ function isInject(t) {
   if (!t) return false;
   for (const p of INJECT) {
     if (t.startsWith(p)) return true;
-    if (p.length >= 12 && t.includes(p.slice(0, 12))) return true;
+    // 长串才允许子串匹配；短串（"=====" 只有 5 字符）只认开头。
+    // 旧写法是 includes(p.slice(0, 12))，拿前 12 字去撞：真人消息里只要出现
+    // 「The approval」「Current runt」这类前缀就被误判成注入，real 数会悄悄变少。
+    if (p.length >= 12 && t.includes(p)) return true;
   }
   return INJECT_RE.some((re) => re.test(t));
 }
@@ -496,7 +534,9 @@ function health(opts) {
       note: usageOnly
         ? "这个数来自最近一次请求的 usage，不等于当前上下文大小；要判真实占用看日志体积与压缩记录"
         : estimateChars
-          ? "这个数把全部历史字符累加后估算（" + estimateChars + " 字符），不是当前上下文；对窗口比只能用来排序，别当预算依据"
+          ? "这个数把全部历史字符累加后估算（" +
+            estimateChars +
+            " 字符），不是当前上下文，也不含 system prompt 与工具定义（稳定区）；真实占用只会更高，排序可信、绝对数别当预算"
           : undefined,
     });
   }
