@@ -41,7 +41,8 @@ function decompressFrames(buf) {
   const failedFrames = [];
   frames.forEach((f, idx) => {
     try {
-      lines.push(...zstdDecompressSync(f).toString("utf8").split("\n"));
+      // 展开运算符会把整帧摊成实参，十万行以上直接爆栈；外层 catch 会把它当成坏帧
+      for (const line of zstdDecompressSync(f).toString("utf8").split("\n")) lines.push(line);
     } catch {
       // 记帧号：只报"坏了几帧"定位不了。帧是按魔数顺序切的，序号能回指到那一段事件
       failedFrames.push(idx);
@@ -53,6 +54,12 @@ function decompressFrames(buf) {
 /** 读一个会话日志，返回事件数组（原样，不做 schema 改写）。 */
 function readSession(file) {
   const { lines, frames, failed, failedFrames } = decompressFrames(readFileSync(file));
+  if (failed > 0) {
+    // 一处警告，四个命令受益：坏帧不为 0 时，下面的账就是少的
+    process.stderr.write(
+      `警告：${file} 有 ${failed}/${frames} 帧解不开（帧号 ${failedFrames.slice(0, 5).join(", ")}），下面的账是少的\n`
+    );
+  }
   const events = [];
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -251,6 +258,14 @@ function scan(file) {
   const lastHeaders = events.filter((e) => e.type === "request/header").slice(-1);
   const maxTokens = lastHeaders[0]?.data?.config?.maxTokens ?? null;
 
+  let seqMin = Infinity;
+  let seqMax = -Infinity;
+  for (const q of seqs) {
+    if (q < seqMin) seqMin = q;
+    if (q > seqMax) seqMax = q;
+  }
+  const seqRange = seqs.length ? [seqMin, seqMax] : null;
+
   const totalChars =
     Object.values(chars).reduce((a, b) => a + b, 0) + reasoningChars + textChars + toolCallChars;
 
@@ -260,7 +275,7 @@ function scan(file) {
     version: declaredVersion,
     frames,
     events: events.length,
-    seqRange: seqs.length ? [Math.min(...seqs), Math.max(...seqs)] : null,
+    seqRange,
     seqCount: new Set(seqs).size,
     turns: turns.size,
     byTypeChars: chars,
