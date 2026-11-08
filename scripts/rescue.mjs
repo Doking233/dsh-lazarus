@@ -15,10 +15,20 @@
 // 会话日志默认在 ~/.dsh/sessions，可用环境变量 DSH_SESSIONS 覆盖。
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { homedir } from "node:os";
 import { createRequire } from "node:module";
-import { zstdDecompressSync } from "node:zlib";
+import * as zlib from "node:zlib";
+
+// 旧 Node（< 22.13）没有 zstdDecompressSync。命名空间导入 + 显式判一次，
+// 装错版本的人看到一句人话，而不是一屏「模块没有导出 xxx」的天书。
+const { zstdDecompressSync } = zlib;
+if (typeof zstdDecompressSync !== "function") {
+  console.error(
+    `失败：这个 Node 是 ${process.versions.node}，没有内置 zstd 解压。lazarus 需要 Node >= 22.13。`,
+  );
+  process.exit(1);
+}
 
 const SESSIONS = process.env.DSH_SESSIONS || join(homedir(), ".dsh", "sessions");
 
@@ -191,7 +201,23 @@ function resolveTarget(arg) {
   }
   const all = listSessionFiles().filter((s) => s.session.includes(arg));
   if (!all.length) throw new Error(`没找到会话：${arg}（日志根目录 ${SESSIONS}）`);
-  all.sort((a, b) => b.mtime - a.mtime);
+  // 救错窗口代价很高：前缀命中多个时不再静默挑 mtime 最新的，列出来让人自己选。
+  const exact = all.filter((s) => s.session === arg);
+  if (exact.length === 1) return exact[0].file;
+  if (all.length > 1) {
+    all.sort((a, b) => b.mtime - a.mtime);
+    const lines = all.slice(0, 10).map((s) => `  ${s.session}  ${new Date(s.mtime).toISOString()}`);
+    throw new Error(
+      [
+        `前缀「${arg}」命中了 ${all.length} 个会话，不替你猜：`,
+        ...lines,
+        all.length > 10 ? `  ……还有 ${all.length - 10} 个` : "",
+        "换更长的前缀，或直接给 .jsonl.zstd 的绝对路径。",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
   return all[0].file;
 }
 
@@ -210,7 +236,7 @@ function textOf(v) {
 }
 
 
-function scan(file) {
+function scan(file, opts = {}) {
   const { events, frames, failed, failedFrames, declaredVersion } = readSession(file);
   if (failed > 0) {
     const shown = failedFrames.slice(0, 10).join(", ");
@@ -302,8 +328,11 @@ function scan(file) {
       maxTokens == null
         ? "拿不到 maxTokens（这份日志里没有 request/header），按 256000 估"
         : {
-            messagesCap: 1048576 - maxTokens,
-            note: "上游 400 的判据是 messages + completion ≤ 1048576",
+            messagesCap: (opts.window || 1048576) - maxTokens,
+            // 上游 400 看的是 messages + completion 对总窗口；billion-context 的 preflight
+            // 另有一道 ~1000000 的本地闸，两条线都要过，取小的那个才是真的能用多少。
+            localPreflightCap: Math.min(1000000, (opts.window || 1048576) - maxTokens),
+            note: `上游 400 的判据是 messages + completion ≤ ${opts.window || 1048576}；本地 preflight 闸约 1000000`,
           },
   };
 }
@@ -448,7 +477,9 @@ function health(opts) {
   const rows = [];
   let source = "估算（index.db 不可用）";
 
-  const dbPath = join(homedir(), ".local", "share", "billion-context", "sessions", "index.db");
+  const dbPath =
+    process.env.LAZARUS_BILLION_DB ||
+    join(homedir(), ".local", "share", "billion-context", "sessions", "index.db");
   const fromDb = new Map();
   if (existsSync(dbPath)) {
     try {
@@ -565,10 +596,13 @@ function require_db() {
   return createRequire(import.meta.url)("node:sqlite");
 }
 
+// 被 import 时不跑 CLI：tests/ 里要单独测这些函数。
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 const rest = argv.slice(1);
-try {
+if (isMain) try {
   if (cmd === "health") {
     const opts = {};
     for (let i = 0; i < rest.length; i++) {
@@ -578,10 +612,16 @@ try {
   } else if (cmd === "verify") {
     console.log(JSON.stringify(verify(rest), null, 2));
   } else {
-    const [arg, out] = rest;
+    const opts = {};
+    const pos = [];
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--window") opts.window = Number(rest[++i]) || undefined;
+      else pos.push(rest[i]);
+    }
+    const [arg, out] = pos;
     // 只认 scan/talk/index 才去解析目标：命令行空着时要打印用法，而不是报"缺参数"
     const file = ["scan", "talk", "index"].includes(cmd) ? resolveTarget(arg) : null;
-    if (cmd === "scan") console.log(JSON.stringify(scan(file), null, 2));
+    if (cmd === "scan") console.log(JSON.stringify(scan(file, opts), null, 2));
     else if (cmd === "talk") console.log(talk(file, out));
     else if (cmd === "index") console.log(index(file, out));
     else
@@ -600,3 +640,17 @@ try {
   console.error("失败：", e.message);
   process.exit(1);
 }
+
+export {
+  decompressFrames,
+  readSession,
+  readEvents,
+  isInject,
+  resolveTarget,
+  listSessionFiles,
+  scan,
+  index,
+  talk,
+  verify,
+  health,
+};

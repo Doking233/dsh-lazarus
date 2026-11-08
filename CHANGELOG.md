@@ -6,6 +6,28 @@
 README 讲「怎么用、为什么这么设计」，这里只记「哪天动了什么」。
 两边分工：想知道某个数为什么长这样，去 README；想知道它是哪次改出来的，来这里。
 
+## 2026-11-08
+
+### 新增
+
+- `tests/rescue.test.mjs`：`node --test` 的回归测试，八条用例。审查报告最大的批评是
+  「关键论断只有手工一次验证」，这是补那一课
+- `inject-patterns.example.json`：外部注入表长什么样，给个能照抄的样子
+- `scan --window N`：预算按给定窗口算，不再写死 1048576
+- `budget.localPreflightCap`：同时给出上游 400 的闸和本地 preflight 的 ~1000000 闸，取小的那个
+- 启动时验 Node 版本：<22.13 直接给一句人话，而不是一屏「模块没有导出」
+- `$LAZARUS_BILLION_DB`：billion-context 的 index.db 路径可覆盖，不再写死 `~/.local/share`
+- SKILL/README 补两处已知局限：魔数切帧理论上会把恰好含 `28 B5 2F FD` 的载荷劈坏；
+  年表逐字抄着用户原话，敏感程度跟日志一样
+
+### 修复
+
+- （p0，由大姐在 `c5e3bc6` 修，本次复核）`lines.push(...split())` 在十万行以上爆栈，
+  被外层 catch 吞成「坏帧」，静默丢整帧
+- （p0，同上）`Math.min(...seqs)` / `Math.max(...seqs)` 在十万级事件上 RangeError
+- `resolveTarget` 前缀命中多个会话时不再静默挑 mtime 最新的，列候选报错——
+  救错窗口的代价比多打一行字高得多
+
 ## 2026-11-06
 
 ### 新增
