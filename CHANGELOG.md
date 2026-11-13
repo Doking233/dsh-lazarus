@@ -6,6 +6,19 @@
 README 讲「怎么用、为什么这么设计」，这里只记「哪天动了什么」。
 两边分工：想知道某个数为什么长这样，去 README；想知道它是哪次改出来的，来这里。
 
+## 2026-11-13
+
+### 新增
+
+- SKILL 加「第 1.5 步：还没死的时候，什么时候该走」：进度条读 `contextTokens`、压缩读原始历史，
+  两数不能混；判据用 `calibratedEstimate`（`localEstimate × k`），过 65 万准备材料、过 68 万动手。
+  这一节填的是原来的空档——以前只有「已经卡死了怎么救」，没有「还回得了话、什么时候该走」
+
+### 变更
+
+- 建新窗步骤补 `agent_preset`：装了 dsh-ops 就传 `ops-ptc`（OPS 模式），没装别硬传。
+  附查法 `ls ~/.dsh/profiles/<profile>/node_modules/dsh-ops/presets/ops-ptc.patch.yml`
+
 ## 2026-11-08
 
 ### 新增
