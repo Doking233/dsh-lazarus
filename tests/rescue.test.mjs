@@ -11,7 +11,7 @@
 // fixture 全部现场造，不依赖任何真实的会话日志。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
+import { zstdCompressSync } from "node:zlib";
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -102,11 +102,15 @@ test("isInject：别把真人说的话误判成注入", () => {
   assert.equal(isInject("我看了一下那个日志，好像没坏"), false);
 });
 
-test("zstd 解压拿得到完整多帧（防整文件解压只拿第一帧的老坑）", () => {
+test("逐帧解压拿得到所有帧（工具的真不变量，不依赖 Node 整文件行为）", () => {
   const buf = Buffer.concat([frame('{"a":1}'), frame('{"b":2}')]);
-  // 整文件解压只拿第一帧——这条断言是为了钉住「必须逐帧」这个前提，
-  // 哪天 Node 改了行为，这里会先响。
-  const whole = zstdDecompressSync(buf).toString("utf8");
-  assert.ok(!whole.includes('"b":2'), "整文件解压只该拿到第一帧");
+  // 「整文件 zstdDecompressSync 只返回第一帧」不是稳定契约：
+  // Node 22.23.5 / 24.20.0 只返回第一帧，24.22.3 起会返回全部帧。
+  // 不能拿它当断言。要钉的是工具自己的不变量：按魔数切帧后每帧都解得开、一行不丢。
+  const r = decompressFrames(buf);
+  assert.equal(r.frames, 2);
+  assert.equal(r.failed, 0);
+  const joined = r.lines.join("\n");
+  assert.ok(joined.includes('"a":1') && joined.includes('"b":2'), "两帧的内容都要在");
   assert.equal(MAGIC.length, 4);
 });
