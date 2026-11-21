@@ -247,7 +247,7 @@ k 的 origin 与会话不一致时按它的规矩不校准（跨路由/跨 provi
 
 ## 改它之前
 
-`node --test tests/rescue.test.mjs`，八条全过再提交。
+`node --test tests/rescue.test.mjs`，八条全过再提交。仓库根目录和技能副本（`.dsh/skills/lazarus/`）里都带了 `tests/`，在哪里读到的这篇，就在哪里跑。
 
 这些用例是照着审查报告实测出来的坑写的：单帧十五万行、十三万事件、坏帧夹在好帧中间、
 自动生成的英文摘要不能被当成真人发言。如果哪天要改 `decompressFrames` 或 `scan` 的
