@@ -25,6 +25,16 @@ README 讲「怎么用、为什么这么设计」，这里只记「哪天动了�
 - `.github/workflows/test.yml`：push / PR 触发，Node 22.x + 24.x 矩阵跑 `node --test tests/rescue.test.mjs`，
   把「改代码前八条全过」从口头纪律变成机器强制，也让版本门槛写错这类问题在 CI 里现形。
 
+### CI 跑出来的真 bug（同日第二轮）
+
+- 上面的 CI 首次运行（run 44872829471）两腿全挂：Node 22.23.5 上两条坏帧用例报 `expected 1, actual 0`，
+  Node 24.20.0 本地却 8/8 过。根因不是测试写错，是**真跨平台行为差异**：Node 22 的 `zstdDecompressSync`
+  对截断帧（魔数 + 垃圾字节，卡死日志写一半的真实形态）**静默返回空缓冲**，Node 24 抛 `Z_BUF_ERROR`。
+  - 修法在工具侧：`decompressFrames` 里解出空串的帧直接计入 `failedFrames`，不再当成空帧吞掉。
+    日志每帧本应至少一行 JSON，空串即断帧；静默当成零事件正是这类救援工具最危险的丢数据方式。
+  - 验证：Node 22.23.5（npx 拉的同版）与 Node 24.20.0 都 8/8 过。
+  - 这条也说明第一版 CI 的价值——本地只跑 Node 24 时，这个 bug 根本看不见。
+
 ## 2026-11-17
 
 ### 新增

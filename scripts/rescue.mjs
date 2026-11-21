@@ -52,7 +52,12 @@ function decompressFrames(buf) {
   frames.forEach((f, idx) => {
     try {
       // 展开运算符会把整帧摊成实参，十万行以上直接爆栈；外层 catch 会把它当成坏帧
-      for (const line of zstdDecompressSync(f).toString("utf8").split("\n")) lines.push(line);
+      const text = zstdDecompressSync(f).toString("utf8");
+      // Node 22 的 zstdDecompressSync 对截断帧静默返回空缓冲（Node 24 抛 Z_BUF_ERROR）。
+      // 会话日志每帧至少含一行 JSON，解出空串说明这帧断在写一半——不能当成「空帧」吞掉：
+      // 卡死窗口的日志恰好可能截断，静默当成零事件正是这类工具最危险的丢数据方式。
+      if (text.length === 0) { failedFrames.push(idx); return; }
+      for (const line of text.split("\n")) lines.push(line);
     } catch {
       // 记帧号：只报"坏了几帧"定位不了。帧是按魔数顺序切的，序号能回指到那一段事件
       failedFrames.push(idx);
