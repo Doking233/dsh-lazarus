@@ -1,4 +1,4 @@
-// 回归测试。跑法：node --test tests/
+// 回归测试。跑法：node --test tests/rescue.test.mjs
 //
 // 覆盖的是 2026-11-08 审查报告里实测出来的那两个 P0：
 //   1. 展开运算符在十万级事件上爆栈（算 seqRange 时）

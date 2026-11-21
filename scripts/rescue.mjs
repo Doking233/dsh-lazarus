@@ -2,7 +2,7 @@
 // rescue.mjs —— 卡死会话的体检与导出。配套技能 lazarus（拉撒路）。
 //
 // 用法：
-//   node rescue.mjs scan   <sid|日志路径>    体积账本 + 注入占比 + 预算 + 最后的错误
+//   node rescue.mjs scan   <sid|日志路径> [--window N]  体积账本 + 注入占比 + 预算 + 最后的错误
 //   node rescue.mjs talk   <sid|路径> [out]  按 turn 导出 user/ai 对话文本
 //   node rescue.mjs index  <sid|路径> [out]  导出用户消息索引（带本地时间，先看这个再写年表）
 //   node rescue.mjs verify <年表.md> <sid|路径>  核对年表里「」框的原话是否真出自他口中
@@ -11,7 +11,7 @@
 // sid 可以是会话 id 的前缀（如 b516a1f7），也可以直接给 .jsonl.zstd 的绝对路径。
 // 只读，不写任何日志。
 //
-// 零依赖：只用 node 标准库（node >= 22.13 才有 zstdDecompressSync）。
+// 零依赖：只用 node 标准库（node >= 22.15.0 / 23.8.0 才有 zstdDecompressSync）。
 // 会话日志默认在 ~/.dsh/sessions，可用环境变量 DSH_SESSIONS 覆盖。
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -20,12 +20,12 @@ import { homedir } from "node:os";
 import { createRequire } from "node:module";
 import * as zlib from "node:zlib";
 
-// 旧 Node（< 22.13）没有 zstdDecompressSync。命名空间导入 + 显式判一次，
+// 旧 Node（< 22.15.0）没有 zstdDecompressSync。命名空间导入 + 显式判一次，
 // 装错版本的人看到一句人话，而不是一屏「模块没有导出 xxx」的天书。
 const { zstdDecompressSync } = zlib;
 if (typeof zstdDecompressSync !== "function") {
   console.error(
-    `失败：这个 Node 是 ${process.versions.node}，没有内置 zstd 解压。lazarus 需要 Node >= 22.13。`,
+    `失败：这个 Node 是 ${process.versions.node}，没有内置 zstd 解压。lazarus 需要 Node >= 22.15.0（或 >= 23.8.0）。`,
   );
   process.exit(1);
 }
@@ -238,13 +238,7 @@ function textOf(v) {
 
 function scan(file, opts = {}) {
   const { events, frames, failed, failedFrames, declaredVersion } = readSession(file);
-  if (failed > 0) {
-    const shown = failedFrames.slice(0, 10).join(", ");
-    console.error(
-      "[警告] " + file + " 有 " + failed + "/" + frames + " 帧解压失败（帧号 " + shown +
-        (failedFrames.length > 10 ? " …" : "") + "）。这些帧里的事件没被读进来，下面的账是少的。",
-    );
-  }
+  // 坏帧警告只在 readSession 层打一次（四个命令都受益），这里不再重复打一遍
   const seqs = events.map((e) => e.seq).filter(Number.isFinite);
   const turns = new Set();
   const chars = {};
@@ -628,7 +622,7 @@ if (isMain) try {
       console.log(
         [
           "用法：",
-          "  node rescue.mjs scan   <sid前缀|日志路径>          体检 + 预算",
+          "  node rescue.mjs scan   <sid前缀|日志路径> [--window N]  体检 + 预算",
           "  node rescue.mjs index  <sid前缀|日志路径> [out.txt] 用户消息索引（带时间）",
           "  node rescue.mjs talk   <sid前缀|日志路径> [out.md]  按 turn 导出双方正文",
           "  node rescue.mjs verify <年表.md> <sid前缀|日志路径> 核对年表里的引号原话是否真出自他口中",

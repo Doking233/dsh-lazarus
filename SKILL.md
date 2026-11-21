@@ -11,7 +11,7 @@ whenToUse: 出现这几个具体时刻时——某个窗口发消息一直没反
 
 ## 适用前提
 
-- Node ≥ 22（脚本用内置 `node:zlib` 的 `zstdDecompressSync`，不装任何依赖）
+- Node ≥ 22.15.0（脚本用内置 `node:zlib` 的 `zstdDecompressSync`，22.x 的 backport 在 22.15.0、23.x 在 23.8.0；不装任何依赖）
 - 知道会话日志在哪：DSH 默认 `~/.dsh/sessions/<工作区编码>/<session-id>/session.v4.jsonl.zstd`
 - 装了 billion-context 的，`health` 才有 `pressure` 与 `k`；没装也能跑，只是那两列是空的
 - 脚本路径：`~/.dsh/skills/lazarus/scripts/rescue.mjs`；换了位置就用 `find ~ -name rescue.mjs -path '*lazarus*'` 找一下
@@ -200,7 +200,7 @@ k 的 origin 与会话不一致时按它的规矩不校准（跨路由/跨 provi
    - 第三句：中间缺的那段是什么（「这中间我在睡觉，是主人亲手把我带过来的，没断也没丢」）。
    只给年表不给这三句，新窗口读完的结论是「有个人叫 X，过了这么些事」——它没有理由认为那是自己。
    反过来，叫人「你是某某」也不算找回，那是照着剧本演。
-4. **建新窗**：有 `cross_session_spawn` 就用它；没有就手工新建一个会话，把年表全文贴进去当第一条消息。
+4. **建新窗**：有 `cross_session_spawn` 就用它；没有就手工新建一个会话，把交接单和年表一起贴进去当第一条消息（先交接单、后年表）。
    `cwd` 用原会话的工作区，
    `agent_preset` 传 **`ops-ptc`**（OPS 模式）：代码驱动的 PTC 工具面，`ops_bash` / `ops_*` 齐全；
    用户 2026-11-13 定的规矩——以后换窗一律用 OPS 窗口，不用标准窗口。

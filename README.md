@@ -1,7 +1,7 @@
 # lazarus（拉撒路）
 
 > 一个给 **DeepSeek Harness（DSH）** 用的技能包。里面是一套「把卡死窗口救回来」的判断流程，外加一个零依赖的诊断脚本。
-> 不依赖任何 npm 包，只要 Node >= 22.13。
+> 不依赖任何 npm 包，只要 Node >= 22.15.0。
 
 把一个**再也说不出话**的 DSH 会话窗口救回来。
 
@@ -26,7 +26,7 @@
 ## 前置条件
 
 - DSH（DeepSeek Harness）的会话日志在 `~/.dsh/sessions/`，可用环境变量 `DSH_SESSIONS` 覆盖
-- **Node >= 22.13**（需要内置的 `zstdDecompressSync`）
+- **Node >= 22.15.0**（需要内置的 `zstdDecompressSync`；22.x 的 backport 在 22.15.0，23.x 在 23.8.0）
 - 可选：装了 `dsh-cross-session-approval` 才能用 `cross_session_spawn` / `cross_session_rename`（接续那一步要用）；没有就手工新建会话，把年表贴进去
 - 可选：装了 `billion-context` 才有 `pressure` / `localEstimate` / `k` 这三列；没装也能跑，`health` 退化成只按 `contextTokens` 排
 - 可选：想给新格式加注入白名单，写在 `scripts/inject-patterns.json`（字符串数组）或环境变量 `$LAZARUS_INJECT_PATTERNS`
